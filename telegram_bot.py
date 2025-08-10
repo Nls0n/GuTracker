@@ -1,4 +1,6 @@
+import json
 import os
+import bcrypt
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
@@ -12,7 +14,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from lk_parser import LKParser
 import asyncio
-import io
+
 from datetime import datetime
 
 load_dotenv()
@@ -76,17 +78,23 @@ async def monitor_grades(user_id: int, login: str, password: str):
     while True:
         try:
             updates = await lk_parser.check_grades_updates(user_id, login, password)
-            if updates:
+            if updates and isinstance(updates, list):
                 for diff in updates:
                     await bot.send_message(
                         user_id,
-                        f"🔔 Новое изменение:\n{diff['value']}",
+                        f"🔔 Новое изменение:\n{diff}",
                         reply_markup=get_lk_keyboard()
                     )
-            await asyncio.sleep(3600)  # Проверка каждые 60 минут
+            else:
+                await bot.send_message(
+                    user_id,
+                    f"Изменений нет",
+                    reply_markup=get_lk_keyboard()
+                )
+            await asyncio.sleep(60)  # Проверка каждые 60 минут
         except Exception as e:
             await bot.send_message(user_id, f"⚠️ Ошибка при проверке оценок: {str(e)}. Необходим релогин")
-            await asyncio.sleep(300)  # Пауза при ошибке
+            await asyncio.sleep(10)  # Пауза при ошибке
 
 
 # ========================
@@ -139,28 +147,51 @@ async def process_credentials(message: Message, state: FSMContext):
         login, password = message.text.split(":")
         user_id = message.from_user.id
 
-        # Проверяем валидность данных (упрощенная версия)
-        if len(login) == 6:  # Базовая валидация
+        # Проверяем валидность данных
+        is_correct = await lk_parser.test_credentials(login, password)
+        if len(login) == 6 and is_correct:
+            # Безопасная вставка в users
+            salt = bcrypt.gensalt()
+            hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+            lk_parser.cursor.execute('''
+                INSERT INTO users (telegram_id, login, password)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (telegram_id) 
+                DO UPDATE SET 
+                    login = EXCLUDED.login,
+                    password = EXCLUDED.password
+            ''', (user_id, login, hashed))
+
+            # Получаем оценки
+            grades = await lk_parser.get_current_grades(login, password)
+
+            # Безопасная вставка в grades
+            lk_parser.cursor.execute('''
+                INSERT INTO grades (telegram_id, data)
+                VALUES (%s, %s)
+            ''', (user_id, json.dumps(grades)))
+
+            lk_parser.conn.commit()
+
+            # Сохраняем сессию
             user_sessions[user_id] = {
                 'login': login,
-                'password': password,
-                'task': None
+                'password': hashed,
+                'task': asyncio.create_task(
+                    monitor_grades(user_id, login, password)
+                )
             }
-
-            # Запускаем мониторинг
-            user_sessions[user_id]['task'] = asyncio.create_task(
-                monitor_grades(user_id, login, password)
-            )
 
             await message.answer(
                 "✅ Авторизация успешна! Вы будете получать уведомления.",
                 reply_markup=get_main_keyboard()
             )
         else:
-            await message.answer("❌ Неверный формат данных. Логин должен быть 6 цифр, пароль - от 6 символов.")
+            await message.answer("❌ Неверные данные. Логин должен быть 6 цифр, пароль - от 6 символов.")
 
     except Exception as e:
         await message.answer(f"⚠️ Ошибка: {str(e)}")
+        lk_parser.conn.rollback()
     finally:
         await state.clear()
 
@@ -170,62 +201,112 @@ async def wrong_credentials_format(message: Message):
     await message.answer("❌ Неверный формат. Введите логин и пароль в формате: 123456:password")
 
 
-async def send_as_file(user_id: int, data: list):
-    """Конвертирует список оценок в текстовый файл"""
-    try:
-        # Преобразуем список в читаемый текст
-        text_data = "📊 Ваши оценки:\n\n"
-        for subject in data:
-            text_data += f"📚 {subject.get('name', 'Без названия')}\n"
-            for grade_type, value in subject.items():
-                if grade_type != 'name':
-                    text_data += f"  - {grade_type}: {value}\n"
-            text_data += "\n"
-
-        # Создаем файл в памяти
-        file_buffer = io.BytesIO()
-        file_buffer.write(text_data.encode('utf-8'))
-        file_buffer.seek(0)
-
-        # Отправляем файл
-        await bot.send_document(
-            chat_id=user_id,
-            document=BufferedInputFile(
-                file_buffer.read(),
-                filename=f"grades_{datetime.now().strftime('%Y-%m-%d')}.txt"
-            ),
-            caption="Ваши текущие оценки"
-        )
-    except Exception as e:
-        await bot.send_message(user_id, f"⚠️ Ошибка создания файла: {str(e)}")
-
-
 @dp.message(F.text == "Моя успеваемость сейчас")
 async def current_grades(message: Message):
     """Обработчик кнопки 'Моя успеваемость сейчас'"""
     user_id = message.from_user.id
 
     if user_id not in user_sessions:
-        await message.answer("Сначала авторизуйтесь!")
+        await message.answer("🔒 Сначала авторизуйтесь через команду /start")
         return
 
     try:
         await message.answer("🔄 Загружаю текущие оценки...")
 
-        # Получаем список оценок
-        grades_list = await lk_parser.get_current_grades(
-            user_sessions[user_id]['login'],
-            user_sessions[user_id]['password']
-        )
+        # Получаем данные из БД
+        lk_parser.cursor.execute('''
+            SELECT data FROM grades
+            WHERE telegram_id = %s
+            ORDER BY changed_at DESC
+            LIMIT 1
+        ''', (user_id,))
 
-        # Проверяем тип данных
-        if not isinstance(grades_list, list):
-            raise ValueError("Парсер вернул не список оценок")
+        result = lk_parser.cursor.fetchone()[0]
+        if not result:
+            await message.answer("📭 У вас нет сохраненных оценок")
+            return
 
-        await send_as_file(message.from_user.id, grades_list)
+        grades_data = result  # Получаем JSON данные
+        lk_parser.cursor.execute('''
+                    SELECT changed_at FROM grades
+                    WHERE telegram_id = %s
+                    ORDER BY changed_at DESC
+                    LIMIT 1
+                ''', (user_id,))
+        result = lk_parser.cursor.fetchone()[0]
+        date_time = result
+        if not isinstance(grades_data, list):
+            await message.answer("⚠️ Некорректный формат данных оценок")
+            return
+
+        # Форматируем оценки для вывода
+        formatted_messages = format_grades_data(grades_data)
+        print(date_time)
+        # Отправляем частями
+        for msg in formatted_messages:
+            await message.answer(msg, parse_mode="HTML")
+        await message.answer(f'Данные актуальны на момент {datetime.strftime(date_time,'%d.%m.%Y - %H:%M')}')
 
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка при загрузке оценок: {str(e)}")
+        error_msg = str(e)
+        await message.answer(
+            f"⚠️ Ошибка при загрузке оценок:\n<code>{error_msg[:1000]}</code>",
+            parse_mode="HTML"
+        )
+
+
+def format_grades_data(grades: list) -> list[str]:
+    """Форматирует данные оценок для отправки в Telegram"""
+    messages = []
+    current_msg = ""
+
+    for subject in grades:
+        if not isinstance(subject, dict):
+            continue
+
+        # Получаем название предмета (первый ключ, который не "Работы")
+        subject_name = next(
+            (key for key in subject.keys() if key != "Работы"),
+            "Неизвестный предмет"
+        )
+        total_score = subject.get(subject_name, "Нет данных")
+
+        # Форматируем блок предмета
+        subject_block = (
+            f"<b>════════════════════════════</b>\n"
+            f"<b>📚 {subject_name}</b>\n"
+            f"<b>🔸 Итого:</b> <code>{str(total_score)}</code>\n\n"
+        )
+
+        # Добавляем работы
+        works = subject.get("Работы", [])
+        if works and isinstance(works, list):
+            subject_block += "<b>📝 Работы:</b>\n"
+            for i, work in enumerate(works, 1):
+                if not isinstance(work, str):
+                    continue
+
+                # Очищаем и экранируем текст работы
+                work_clean = work.replace('\n', ' ').replace('  ', ' ')
+
+                # Разделяем баллы и описание
+                if ' за ' in work_clean:
+                    points, desc = work_clean.split(' за ', 1)
+                    subject_block += f"{i}. <code>{points.strip()}</code>\n   за {desc.strip()}\n"
+                else:
+                    subject_block += f"{i}. {work_clean}\n"
+
+        # Проверяем, не превысим ли лимит
+        if len(current_msg) + len(subject_block) > 4000:
+            messages.append(current_msg)
+            current_msg = subject_block
+        else:
+            current_msg += "\n" + subject_block if current_msg else subject_block
+
+    if current_msg:
+        messages.append(current_msg)
+
+    return messages or ["ℹ️ Нет данных для отображения"]
 
 
 @dp.message(Command("stop"))

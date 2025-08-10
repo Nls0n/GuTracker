@@ -13,6 +13,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 import psycopg2
 from dotenv import load_dotenv
 import logging
+import asyncio
+
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -130,7 +133,7 @@ class LKParser:
             driver.get(self.lk_url)
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "username"))
-            ).send_keys(login)
+            ).send_keys(str(login))
             driver.find_element(By.NAME, "password").send_keys(password)
             driver.find_element(By.CSS_SELECTOR, "input.base-submit.form-submit").click()
             all_cookies = driver.get_cookies()
@@ -148,7 +151,7 @@ class LKParser:
         self.uid = user_id
         self.login = login
         self.password = password
-        is_registered, _ = await self.test_credentials(login, password)
+        is_registered = await self.test_credentials(login, password)
         cookies = self.get_cookies(login, password)
         if not cookies or not is_registered:
             logger.error("Не удалось получить куки")
@@ -176,7 +179,7 @@ class LKParser:
         data = self.process_grades(data)
         self.cursor.execute('''
                 SELECT data FROM grades 
-                WHERE user_id = %s
+                WHERE telegram_id = %s
                 ORDER BY changed_at DESC LIMIT 1
             ''', (user_id,))
 
@@ -186,7 +189,7 @@ class LKParser:
             differences = self._find_json_differences(last_grades, data)
             self._save_to_db(user_id, data)
             return differences
-        return []
+        return 'изменений нет'
 
     def process_grades(self, json_data: dict):
         """Обработка сырых данных из ЛК"""
@@ -273,10 +276,10 @@ class LKParser:
                                 UPDATE grades
                                 SET data = %s, 
                                     changed_at = %s
-                                WHERE user_id = (
-                                    SELECT user_id 
+                                WHERE telegram_id = (
+                                    SELECT telegram_id 
                                     FROM grades 
-                                    WHERE user_id = %s
+                                    WHERE telegram_id = %s
                                     ORDER BY changed_at DESC 
                                     LIMIT 1
                                 )
@@ -296,7 +299,7 @@ class LKParser:
             # print('зашли на урл лк')
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "username"))
-            ).send_keys(login)
+            ).send_keys(str(login))
             # print('ввели логин')
             driver.find_element(By.NAME, "password").send_keys(password)
             # print('ввели пароль')
@@ -309,13 +312,13 @@ class LKParser:
                 cookies_dict[cookie['name']] = cookie['value']
 
             if driver.current_url == 'https://lk.gubkin.ru/new/#/info/news':
-                return True, cookies_dict
+                return cookies_dict
             else:
                 return False
         except Exception as e:
             return f"Произошла ошибка {e}"
 
-    async def get_current_grades(self, login: int, password: str):
+    async def get_current_grades(self, login: str, password: str):
         """Получение текущих оценок"""
         self.login = login
         self.password = password
@@ -346,10 +349,23 @@ class LKParser:
         data = self.process_grades(data)
         return data
 
+
+async def collect(cls: LKParser):
+    check = await cls.check_grades_updates(cls.uid, cls.login, cls.password)
+    test = await cls.test_credentials(login=cls.login, password=cls.password)
+    cur_grades = await cls.get_current_grades(cls.login, cls.password)
+    return check,test,cur_grades
+
 if __name__ == "__main__":
     instance = LKParser()
-    # print(instance.check_grades_updates(1, instance.login, instance.password))
+    instance.login = os.getenv('LOGIN')
+    instance.password = os.getenv('PASSWORD')
+    instance.uid = os.getenv('UID')
+    print(asyncio.run(collect(instance)))
+
+
+    # print(instance.check_grades_updates(user_id, instance.login, instance.password))
     # print(instance.test_credentials(login=instance.login, password=instance.password))
     # print(instance.get_cookies(login=instance.login, password=instance.password))
-    print('---')
-    print(instance.get_current_grades(instance.login, instance.password))
+    # print('---')
+    # print(instance.get_current_grades(instance.login, instance.password)
