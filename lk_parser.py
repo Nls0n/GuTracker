@@ -349,6 +349,7 @@ class LKParser:
         data = self.process_grades(data)
         return data
 
+
 async def collect(cls: LKParser):
     check = await cls.check_grades_updates(cls.uid, cls.login, cls.password)
     test = await cls.test_credentials(login=cls.login, password=cls.password)
@@ -367,4 +368,4 @@ if __name__ == "__main__":
     # print(instance.test_credentials(login=instance.login, password=instance.password))
     # print(instance.get_cookies(login=instance.login, password=instance.password))
     # print('---')
-    # print(instance.get_current_grades(instance.login, instance.password))
+    # print(instance.get_current_grades(instance.login, instance.password)

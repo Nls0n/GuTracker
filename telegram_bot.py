@@ -4,8 +4,9 @@ import bcrypt
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.formatting import as_list, as_section, Bold, Text
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
@@ -13,7 +14,9 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from lk_parser import LKParser
 import asyncio
+
 from datetime import datetime
+
 load_dotenv()
 
 # Инициализация бота и диспетчера
