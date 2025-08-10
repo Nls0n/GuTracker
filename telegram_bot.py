@@ -1,6 +1,5 @@
 import json
 import os
-import bcrypt
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
@@ -148,8 +147,6 @@ async def process_credentials(message: Message, state: FSMContext):
         is_correct = await lk_parser.test_credentials(login, password)
         if len(login) == 6 and is_correct:
             # Безопасная вставка в users
-            salt = bcrypt.gensalt()
-            hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
             lk_parser.cursor.execute('''
                 INSERT INTO users (telegram_id, login, password)
                 VALUES (%s, %s, %s)
@@ -157,7 +154,7 @@ async def process_credentials(message: Message, state: FSMContext):
                 DO UPDATE SET 
                     login = EXCLUDED.login,
                     password = EXCLUDED.password
-            ''', (user_id, login, hashed))
+            ''', (user_id, login, password))  # Обратите внимание на порядок!
 
             # Получаем оценки
             grades = await lk_parser.get_current_grades(login, password)
@@ -173,7 +170,7 @@ async def process_credentials(message: Message, state: FSMContext):
             # Сохраняем сессию
             user_sessions[user_id] = {
                 'login': login,
-                'password': hashed,
+                'password': password,
                 'task': asyncio.create_task(
                     monitor_grades(user_id, login, password)
                 )
