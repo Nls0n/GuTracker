@@ -346,10 +346,10 @@ class LKParser:
         data = self.process_grades(data)
         return data
 
-
-instance = LKParser()
-# print(instance.check_grades_updates(1, instance.login, instance.password))
-# print(instance.test_credentials(login=instance.login, password=instance.password))
-# print(instance.get_cookies(login=instance.login, password=instance.password))
-print('---')
-print(instance.get_current_grades(instance.login, instance.password))
+if __name__ == "__main__":
+    instance = LKParser()
+    # print(instance.check_grades_updates(1, instance.login, instance.password))
+    # print(instance.test_credentials(login=instance.login, password=instance.password))
+    # print(instance.get_cookies(login=instance.login, password=instance.password))
+    print('---')
+    print(instance.get_current_grades(instance.login, instance.password))

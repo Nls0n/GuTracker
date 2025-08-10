@@ -2,8 +2,9 @@ import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile
 from aiogram.fsm.context import FSMContext
+from aiogram.utils.formatting import as_list, as_section, Bold, Text
 from aiogram.fsm.state import State, StatesGroup
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
@@ -11,6 +12,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from lk_parser import LKParser
 import asyncio
+import io
+from datetime import datetime
 
 load_dotenv()
 
@@ -166,6 +169,37 @@ async def wrong_credentials_format(message: Message):
     """Неправильный формат учетных данных"""
     await message.answer("❌ Неверный формат. Введите логин и пароль в формате: 123456:password")
 
+
+async def send_as_file(user_id: int, data: list):
+    """Конвертирует список оценок в текстовый файл"""
+    try:
+        # Преобразуем список в читаемый текст
+        text_data = "📊 Ваши оценки:\n\n"
+        for subject in data:
+            text_data += f"📚 {subject.get('name', 'Без названия')}\n"
+            for grade_type, value in subject.items():
+                if grade_type != 'name':
+                    text_data += f"  - {grade_type}: {value}\n"
+            text_data += "\n"
+
+        # Создаем файл в памяти
+        file_buffer = io.BytesIO()
+        file_buffer.write(text_data.encode('utf-8'))
+        file_buffer.seek(0)
+
+        # Отправляем файл
+        await bot.send_document(
+            chat_id=user_id,
+            document=BufferedInputFile(
+                file_buffer.read(),
+                filename=f"grades_{datetime.now().strftime('%Y-%m-%d')}.txt"
+            ),
+            caption="Ваши текущие оценки"
+        )
+    except Exception as e:
+        await bot.send_message(user_id, f"⚠️ Ошибка создания файла: {str(e)}")
+
+
 @dp.message(F.text == "Моя успеваемость сейчас")
 async def current_grades(message: Message):
     """Обработчик кнопки 'Моя успеваемость сейчас'"""
@@ -178,12 +212,18 @@ async def current_grades(message: Message):
     try:
         await message.answer("🔄 Загружаю текущие оценки...")
 
-        grades = await lk_parser.get_current_grades(
+        # Получаем список оценок
+        grades_list = await lk_parser.get_current_grades(
             user_sessions[user_id]['login'],
             user_sessions[user_id]['password']
         )
 
-        await message.answer(f"📊 Текущие оценки:\n{grades}")
+        # Проверяем тип данных
+        if not isinstance(grades_list, list):
+            raise ValueError("Парсер вернул не список оценок")
+
+        await send_as_file(message.from_user.id, grades_list)
+
     except Exception as e:
         await message.answer(f"⚠️ Ошибка при загрузке оценок: {str(e)}")
 
