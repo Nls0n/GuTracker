@@ -77,6 +77,10 @@ async def monitor_grades(user_id: int, login: str, password: str):
     """Фоновая проверка изменений в оценках"""
     while True:
         try:
+            lk_parser.cursor.execute('''
+            UPDATE grades
+            SET changed_at = %s
+            WHERE telegram_id = %s''', (datetime.now(), user_id))
             updates = await lk_parser.check_grades_updates(user_id, login, password)
             if updates and isinstance(updates, list):
                 for diff in updates:
@@ -149,6 +153,7 @@ async def process_credentials(message: Message, state: FSMContext):
 
         # Проверяем валидность данных
         is_correct = await lk_parser.test_credentials(login, password)
+        await message.answer('Идет проверка данных, пожалуйста подождите...')
         if len(login) == 6 and is_correct:
             # Безопасная вставка в users
             salt = bcrypt.gensalt()
@@ -166,12 +171,18 @@ async def process_credentials(message: Message, state: FSMContext):
             grades = await lk_parser.get_current_grades(login, password)
 
             # Безопасная вставка в grades
-            lk_parser.cursor.execute('''
-                INSERT INTO grades (telegram_id, data)
-                VALUES (%s, %s)
-            ''', (user_id, json.dumps(grades)))
-
-            lk_parser.conn.commit()
+            try:
+                lk_parser.cursor.execute('''
+                UPDATE grades
+                SET data = %s
+                WHERE telegram_id = %s''', (json.dumps(grades), user_id))
+            except:
+                lk_parser.cursor.execute('''
+                    INSERT INTO grades (telegram_id, data)
+                    VALUES (%s, %s)
+                ''', (user_id, json.dumps(grades)))
+            finally:
+                lk_parser.conn.commit()
 
             # Сохраняем сессию
             user_sessions[user_id] = {
@@ -187,7 +198,7 @@ async def process_credentials(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard()
             )
         else:
-            await message.answer("❌ Неверные данные. Логин должен быть 6 цифр, пароль - от 6 символов.")
+            await message.answer("❌ Неверные данные. Проверьте корректность логина/пароля")
 
     except Exception as e:
         await message.answer(f"⚠️ Ошибка: {str(e)}")

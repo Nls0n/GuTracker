@@ -207,6 +207,7 @@ class LKParser:
                         current_subject["Работы"] = [
                             f"{work["currentPoints"]} баллов из {work["maxPoints"]} за {work["testName"]} - {work["name"]} Дедлайн - {work["weekNumber"]} неделя."]
                 beauty_data.append(current_subject)
+        beauty_data.append({f"Количество пропусков": f"{json_data["result"]["truancy"]["all"]}, из них {json_data["result"]["truancy"]["justified"]} по уважительной причине"})
         return beauty_data
 
     def _find_json_differences(self, old_data, new_data, path="", differences=None):
