@@ -1,13 +1,6 @@
 import random
 import time
 from datetime import datetime
-import json_tools
-
-def visualize_diff(json1, json2):
-    diff = json_tools.diff(json1, json2)
-    if not diff:
-        return "Различий нет"
-    return diff
 
 class SessionKeeper:
     def __init__(self, driver):
@@ -71,3 +64,20 @@ def save_grades_to_file(data, filename="grades_report.txt"):
         file.write(f"📅 Отчёт сформирован: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
 
     print(f"✅ Отчёт успешно сохранён в файл {filename}")
+
+
+def clean_json(data):
+    if isinstance(data, dict):
+        result = {}
+        for key, value in data.items():
+            result[key] = clean_json(value)
+        return result
+
+    elif isinstance(data, list):
+        return [clean_json(item) for item in data]
+
+    elif data is None or data == "":
+        return 0
+
+    else:
+        return data

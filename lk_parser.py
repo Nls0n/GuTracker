@@ -14,6 +14,7 @@ import psycopg2
 from dotenv import load_dotenv
 import logging
 import asyncio
+from utils import clean_json
 
 
 
@@ -194,6 +195,7 @@ class LKParser:
     def process_grades(self, json_data: dict):
         """Обработка сырых данных из ЛК"""
         beauty_data = []
+        json_data = clean_json(json_data)
         if json_data["success"] is True:
             for subject in json_data["result"]["performance"]:
                 current_subject = dict()
@@ -207,6 +209,7 @@ class LKParser:
                         current_subject["Работы"] = [
                             f"{work["currentPoints"]} баллов из {work["maxPoints"]} за {work["testName"]} - {work["name"]} Дедлайн - {work["weekNumber"]} неделя."]
                 beauty_data.append(current_subject)
+        beauty_data.append({f"Количество пропусков": f"{json_data["result"]["truancy"]["all"]}, из них {json_data["result"]["truancy"]["justified"]} по уважительной причине"})
         return beauty_data
 
     def _find_json_differences(self, old_data, new_data, path="", differences=None):

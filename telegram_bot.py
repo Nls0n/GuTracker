@@ -8,6 +8,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKey
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.formatting import as_list, as_section, Bold, Text
 from aiogram.fsm.state import State, StatesGroup
+from webdriver_manager.chrome import ChromeDriverManager
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -16,7 +17,9 @@ from lk_parser import LKParser
 import asyncio
 
 from datetime import datetime
+import logging
 
+logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Инициализация бота и диспетчера
@@ -63,7 +66,7 @@ def get_lk_keyboard():
         keyboard=[
             [KeyboardButton(text="Статус моей подписки")],
             [KeyboardButton(text="Моя успеваемость сейчас")],
-            [KeyboardButton(text="Авторизоваться")]
+            [KeyboardButton(text="FAQ")]
         ],
         resize_keyboard=True
     )
@@ -77,6 +80,10 @@ async def monitor_grades(user_id: int, login: str, password: str):
     """Фоновая проверка изменений в оценках"""
     while True:
         try:
+            lk_parser.cursor.execute('''
+            UPDATE grades
+            SET changed_at = %s
+            WHERE telegram_id = %s''', (datetime.now(), user_id))
             updates = await lk_parser.check_grades_updates(user_id, login, password)
             if updates and isinstance(updates, list):
                 for diff in updates:
@@ -85,15 +92,10 @@ async def monitor_grades(user_id: int, login: str, password: str):
                         f"🔔 Новое изменение:\n{diff}",
                         reply_markup=get_lk_keyboard()
                     )
-            else:
-                await bot.send_message(
-                    user_id,
-                    f"Изменений нет",
-                    reply_markup=get_lk_keyboard()
-                )
-            await asyncio.sleep(60)  # Проверка каждые 60 минут
+            await asyncio.sleep(10)  # Проверка каждые 60 минут
         except Exception as e:
             await bot.send_message(user_id, f"⚠️ Ошибка при проверке оценок: {str(e)}. Необходим релогин")
+            logger.error(f'Ошибка {e}')
             await asyncio.sleep(10)  # Пауза при ошибке
 
 
@@ -118,7 +120,7 @@ async def show_agreement(message: Message):
     """Обработчик кнопки 'Ознакомиться'"""
     agreement_msg = """
     Пользование ботом подразумевается платным (чтобы были деньги на хостинг сервера).
-До 30.09.2025 бот предполагается как бесплатный, затем планируется переход на полностью платную основу.
+На время бета-тестирования бот предполагается как бесплатный, затем планируется переход на полностью платную основу.
 
 Как начать пользоваться?
 1. Нажимай на кнопку "Авторизоваться"
@@ -144,15 +146,16 @@ async def start_auth(message: Message, state: FSMContext):
 async def process_credentials(message: Message, state: FSMContext):
     """Обработка введенных учетных данных"""
     try:
+        await message.answer('Идет проверка данных, пожалуйста подождите...')
         login, password = message.text.split(":")
         user_id = message.from_user.id
 
         # Проверяем валидность данных
         is_correct = await lk_parser.test_credentials(login, password)
         if len(login) == 6 and is_correct:
-            # Безопасная вставка в users
             salt = bcrypt.gensalt()
             hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+            # Безопасная вставка в users
             lk_parser.cursor.execute('''
                 INSERT INTO users (telegram_id, login, password)
                 VALUES (%s, %s, %s)
@@ -176,7 +179,7 @@ async def process_credentials(message: Message, state: FSMContext):
             # Сохраняем сессию
             user_sessions[user_id] = {
                 'login': login,
-                'password': hashed,
+                'password': password,
                 'task': asyncio.create_task(
                     monitor_grades(user_id, login, password)
                 )
@@ -187,10 +190,11 @@ async def process_credentials(message: Message, state: FSMContext):
                 reply_markup=get_main_keyboard()
             )
         else:
-            await message.answer("❌ Неверные данные. Логин должен быть 6 цифр, пароль - от 6 символов.")
+            await message.answer("❌ Неверные данные. Проверьте корректность логина/пароля")
 
     except Exception as e:
         await message.answer(f"⚠️ Ошибка: {str(e)}")
+        logger.error(f'Ошибка {e}')
         lk_parser.conn.rollback()
     finally:
         await state.clear()
@@ -241,7 +245,6 @@ async def current_grades(message: Message):
 
         # Форматируем оценки для вывода
         formatted_messages = format_grades_data(grades_data)
-        print(date_time)
         # Отправляем частями
         for msg in formatted_messages:
             await message.answer(msg, parse_mode="HTML")
@@ -249,6 +252,7 @@ async def current_grades(message: Message):
 
     except Exception as e:
         error_msg = str(e)
+        logger.error(f'Ошибка {e}')
         await message.answer(
             f"⚠️ Ошибка при загрузке оценок:\n<code>{error_msg[:1000]}</code>",
             parse_mode="HTML"
@@ -340,15 +344,53 @@ async def personal_account(message: Message):
     )
 @dp.message(F.text == "FAQ")
 async def get_faq(message: Message):
+    faq_msg = """*Часто задаваемые вопросы*
+*1. Сколько будет длиться бета-тестирование?*
+    
+_Около месяца, возможно больше_
+    
+*2. Сервис бесплатный?*
+    
+_На время бета-тестирования - да.
+Затем планируется переход на платную основу в виде подписки,
+когда сервис будет работать стабильно.
+Просто необходимо банально оплачивать сервак(_
+    
+*3. Какая будет цена подписки?*
+    
+_Планируется в районе 69 рублей в месяц_
+    
+*4. Безопасен ли сервис? Может ли быть утечка данных?*
+   
+_Да, сервис безопасный, все ваши данные шифруются и хранятся
+в БД в зашифрованном виде, так что ни разработчик,
+ни злоумышленник не смогут использовать ваши данные,
+даже в случае взлома_
+    
+*5. Кто автор?*
+    
+_Автор хотел бы остаться анонимным)_
+    
+*6. Что делать если сервис не работает? Можно ли будет вернуть деньги в дальнейшем?*
+    
+_Если сервис перестал работать на этапе бета-тестирования, 
+то пожалуйста сообщите подробно об этой проблеме админу.
+Возврат денег предполагается возможным,
+пиши админу и разбирайтесь, к релизу планируется вывести свод
+правил, при которых возможен возврат денежных средств._
+"""
     await message.answer(
-        "faq",
+        faq_msg,
+        parse_mode=ParseMode.MARKDOWN,
         reply_markup=get_lk_keyboard()
     )
 
 @dp.message(F.text == "Статус моей подписки")
 async def subscription_status(message: Message):
     """Обработчик кнопки 'Статус моей подписки'"""
-    await message.answer("Ваша подписка активна до 30.09.2025")
+    await message.answer("**Ваша подписка активна на время бета-тестирования**",
+                         parse_mode=ParseMode.MARKDOWN,
+                         reply_markup=get_lk_keyboard())
 
 
 # ========================
@@ -361,6 +403,7 @@ if __name__ == "__main__":
 
 
     try:
+        ChromeDriverManager().install()
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped")
