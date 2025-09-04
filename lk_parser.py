@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -250,7 +250,7 @@ class LKParser:
                                     ORDER BY changed_at DESC 
                                     LIMIT 1
                                 )
-                            """, (json.dumps(data), datetime.now(), user_id))
+                            """, (json.dumps(data), datetime.now()+timedelta(hours=3), user_id))
 
         self.conn.commit()
 
