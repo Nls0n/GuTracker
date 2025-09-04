@@ -28,9 +28,9 @@ class LKParser:
     def __init__(self):
         self.conn = psycopg2.connect(
             dbname=os.getenv("DB_NAME"),
-            user="postgres",
+            user=os.getenv("USER"),
             password=os.getenv("DB_PASSWORD"),
-            host='localhost'
+            host=os.getenv("HOST")
         )
         self.cursor = self.conn.cursor()
         self.lk_url = 'https://lk.gubkin.ru/new/login'
@@ -86,66 +86,30 @@ class LKParser:
         self.password = password
         chrome_options = Options()
 
-        # Базовые настройки для ускорения
-        chrome_options.add_argument("--headless")  # Режим без GUI
-        chrome_options.add_argument("--disable-gpu")  # Отключение GPU
-        chrome_options.add_argument("--no-sandbox")  # Обход sandbox безопасности
-        chrome_options.add_argument("--disable-dev-shm-usage")  # Избегание проблем с /dev/shm
+        # Обязательные настройки для работы в контейнере
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-dev-shm-usage')
 
-        # Оптимизации загрузки
-        chrome_options.add_argument("--disable-extensions")  # Отключение расширений
-        chrome_options.add_argument("--disable-infobars")  # Отключение информационных панелей
-        chrome_options.add_argument("--disable-browser-side-navigation")  # Отключение навигации на стороне браузера
-        chrome_options.add_argument("--disable-features=NetworkService")  # Отключение некоторых сетевых сервисов
+        # Используем Service с явным указанием пути к chromedriver
+        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+        driver.get(self.lk_url)
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "username"))
+        ).send_keys(str(login))
+        driver.find_element(By.NAME, "password").send_keys(password)
+        driver.find_element(By.CSS_SELECTOR, "input.base-submit.form-submit").click()
+        all_cookies = driver.get_cookies()
+        cookies = {
+            c['name']: c['value']
+            for c in all_cookies
+            if c['domain'] == 'lk.gubkin.ru'
+        }
+        driver.quit()
+        return cookies
 
-        # Ускорение загрузки страниц
-        chrome_options.page_load_strategy = 'eager'  # Загрузка только DOM
-
-        # Отключение ненужных функций
-        chrome_options.add_argument("--disable-notifications")  # Уведомления
-        chrome_options.add_argument("--disable-popup-blocking")  # Блокировка попапов
-        chrome_options.add_argument("--disable-default-apps")  # Стандартные приложения Chrome
-        chrome_options.add_argument("--disable-translate")  # Переводчик Google
-
-        # Оптимизации JavaScript
-        chrome_options.add_argument("--disable-javascript")  # Полное отключение JS
-        # ИЛИ более тонкие настройки:
-        chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # Отключение загрузки изображений
-
-        # Сетевые оптимизации
-        chrome_options.add_argument("--disable-web-security")  # Отключение политики CORS
-        chrome_options.add_argument("--allow-running-insecure-content")  # Разрешение небезопасного контента
-
-        # Экспериментальные настройки для ускорения
-        chrome_options.add_argument(
-            "--enable-features=NetworkServiceInProcess")  # Экспериментальная сетевая оптимизация
-        chrome_options.add_argument("--disable-software-rasterizer")  # Отключение софтверного растеризатора
-
-        # Настройки профиля
-        chrome_options.add_argument("--user-data-dir=/tmp/chrome_profile")  # Использование временного профиля
-        chrome_options.add_argument("--disable-sync")  # Отключение синхронизации Chrome
-
-        # Инициализация драйвера с оптимизированными настройками
-        driver = webdriver.Chrome(
-            service=Service(ChromeDriverManager().install()),
-            options=chrome_options
-        )
-        try:
-            driver.get(self.lk_url)
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "username"))
-            ).send_keys(str(login))
-            driver.find_element(By.NAME, "password").send_keys(password)
-            driver.find_element(By.CSS_SELECTOR, "input.base-submit.form-submit").click()
-            all_cookies = driver.get_cookies()
-            cookies = {
-                c['name']: c['value']
-                for c in all_cookies
-                if c['domain'] == 'lk.gubkin.ru'
-            }
-            return cookies
-        finally:
-            driver.quit()
 
     async def check_grades_updates(self, user_id: int, login: str, password: str):
         """Проверка изменений в оценках"""

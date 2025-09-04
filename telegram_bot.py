@@ -92,11 +92,11 @@ async def monitor_grades(user_id: int, login: str, password: str):
                         f"🔔 Новое изменение:\n{diff}",
                         reply_markup=get_lk_keyboard()
                     )
-            await asyncio.sleep(10)  # Проверка каждые 60 минут
+            await asyncio.sleep(3600)  # Проверка каждые 60 минут
         except Exception as e:
             await bot.send_message(user_id, f"⚠️ Ошибка при проверке оценок: {str(e)}. Необходим релогин")
             logger.error(f'Ошибка {e}')
-            await asyncio.sleep(10)  # Пауза при ошибке
+            await asyncio.sleep(3600)  # Пауза при ошибке
 
 
 # ========================
@@ -248,7 +248,7 @@ async def current_grades(message: Message):
         # Отправляем частями
         for msg in formatted_messages:
             await message.answer(msg, parse_mode="HTML")
-        await message.answer(f'Данные актуальны на момент {datetime.strftime(date_time,'%d.%m.%Y - %H:%M')}')
+        await message.answer(f"Данные актуальны на момент {datetime.strftime(date_time,'%d.%m.%Y - %H:%M')}")
 
     except Exception as e:
         error_msg = str(e)
