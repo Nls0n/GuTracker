@@ -16,7 +16,7 @@ from aiogram.types import Message
 from lk_parser import LKParser
 import asyncio
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ async def monitor_grades(user_id: int, login: str, password: str):
             lk_parser.cursor.execute('''
             UPDATE grades
             SET changed_at = %s
-            WHERE telegram_id = %s''', (datetime.now(), user_id))
+            WHERE telegram_id = %s''', (datetime.now()+timedelta(hours=3), user_id))
             updates = await lk_parser.check_grades_updates(user_id, login, password)
             if updates and isinstance(updates, list):
                 for diff in updates:
